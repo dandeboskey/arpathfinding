@@ -2,7 +2,7 @@
 //  CombinedARViewController.swift
 //  shortestPathV2
 //
-//  Created by Aditya Narsinghpura on 11/10/24.
+//  Created by James, Adi, Rostam on 11/10/24.
 //
 import UIKit
 import ARKit
@@ -14,16 +14,21 @@ class CombinedARViewController: UIViewController, ARSessionDelegate {
     var ballPositions: [SIMD3<Float>] = []
     var startPoint: SIMD3<Float>?
     var endPoint: SIMD3<Float>?
+    var endPoints: [SIMD3<Float>] = []
     var nodes: [Node] = []
     var neighbors: [Int: [Node]] = [:]
     var isPlacingBalls = false
     var timer: Timer?
     var areBallsHidden = false
     var pathNodes: [Int] = []
+    var pathStartToEndPoint1: [Int] = []
+    var pathEndPoint1ToEndPoint2: [Int] = []
+    var deliveryCompletePressedCount = 0
     private var showPathButton: UIButton!
     private var createGraphButton: UIButton!
     private var toggleBallsButton: UIButton!
     private var toggleBallVisibilityButton: UIButton!
+    private var deliveryCompleteButton: UIButton!
 
 
 
@@ -67,12 +72,13 @@ class CombinedARViewController: UIViewController, ARSessionDelegate {
                 createGraphButton = createButton(title: "Create Graph", action: #selector(createGraph), color: .systemBlue)
                 showPathButton = createButton(title: "Show Path", action: #selector(showShortestPath), color: .systemBlue)
                 toggleBallVisibilityButton = createButton(title: "Hide Balls", action: #selector(toggleBallVisibility), color: .systemBlue)
-                
+                deliveryCompleteButton = createButton(title: "Delivery Complete", action: #selector(deliveryCompleteAction), color: .systemOrange)
+                deliveryCompleteButton.isHidden = true // Initially hidden
                 showPathButton.isHidden = true
            
            let topStackView = UIStackView(arrangedSubviews: [toggleBallsButton, setStartButton, setEndButton])
            let bottomStackView = UIStackView(arrangedSubviews: [clearPointsButton, createGraphButton, showPathButton])
-           let mainStackView = UIStackView(arrangedSubviews: [topStackView, bottomStackView, toggleBallVisibilityButton])
+           let mainStackView = UIStackView(arrangedSubviews: [topStackView, bottomStackView, toggleBallVisibilityButton, deliveryCompleteButton])
            
            [topStackView, bottomStackView].forEach { stackView in
                stackView.axis = .horizontal
@@ -85,6 +91,8 @@ class CombinedARViewController: UIViewController, ARSessionDelegate {
            
            view.addSubview(mainStackView)
            mainStackView.translatesAutoresizingMaskIntoConstraints = false
+        
+        
            
            NSLayoutConstraint.activate([
                mainStackView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -bottomPadding),
@@ -93,7 +101,8 @@ class CombinedARViewController: UIViewController, ARSessionDelegate {
                
                topStackView.heightAnchor.constraint(equalToConstant: buttonHeight),
                bottomStackView.heightAnchor.constraint(equalToConstant: buttonHeight),
-               toggleBallVisibilityButton.heightAnchor.constraint(equalToConstant: buttonHeight)
+               toggleBallVisibilityButton.heightAnchor.constraint(equalToConstant: buttonHeight),
+               deliveryCompleteButton.heightAnchor.constraint(equalToConstant: buttonHeight)
            ])
        }
        
@@ -127,6 +136,7 @@ class CombinedARViewController: UIViewController, ARSessionDelegate {
             DispatchQueue.main.async {
                 self.showPathButton.isHidden = false
                 self.createGraphButton.isHidden = true
+                self.deliveryCompleteButton.isHidden = false
                 print("Graph setup complete, Show Path button visible")
             }
         }
@@ -182,43 +192,66 @@ class CombinedARViewController: UIViewController, ARSessionDelegate {
     }
 
     @objc private func setEndPoint() {
+        if endPoints.count >= 2 {
+            print("Already set two end points.")
+            return
+        }
         if let raycastResult = arView.raycast(from: view.center, allowing: .estimatedPlane, alignment: .any).first {
-            endPoint = SIMD3<Float>(raycastResult.worldTransform.columns.3.x,
-                                    raycastResult.worldTransform.columns.3.y,
-                                    raycastResult.worldTransform.columns.3.z)
-            if let endPoint = endPoint {
-                addSphere(at: endPoint, color: .red)
-            }
+            let endPoint = SIMD3<Float>(raycastResult.worldTransform.columns.3.x,
+                                        raycastResult.worldTransform.columns.3.y,
+                                        raycastResult.worldTransform.columns.3.z)
+            endPoints.append(endPoint)
+            let color: UIColor = endPoints.count == 1 ? .red : .purple
+            addSphere(at: endPoint, color: color)
         }
     }
 
     @objc private func clearPoints() {
         startPoint = nil
-        endPoint = nil
+        endPoints.removeAll()
         pathNodes.removeAll()
+        pathStartToEndPoint1.removeAll()
+        pathEndPoint1ToEndPoint2.removeAll()
+        deliveryCompletePressedCount = 0
         showPathButton.isHidden = true
         createGraphButton.isHidden = false
+        deliveryCompleteButton.isHidden = true
         refreshARView()
         print("Points cleared, Show Path button hidden")
     }
+
     
     private func refreshARView() {
         arView.scene.anchors.removeAll()
-        
-        for (index, position) in ballPositions.enumerated() {
-            if !areBallsHidden || pathNodes.contains(index) {
-                addSphere(at: position, color: pathNodes.contains(index) ? .orange : .blue)
+
+        for node in nodes {
+            let position = node.position
+            var color: UIColor?
+
+            if pathStartToEndPoint1.contains(node.id) && deliveryCompletePressedCount == 0 {
+                // Node is part of the first path
+                color = .orange
+            } else if pathEndPoint1ToEndPoint2.contains(node.id) && deliveryCompletePressedCount >= 1 {
+                // Node is part of the second path
+                color = .yellow
+            } else if node.position == startPoint {
+                // Start point
+                color = .green
+            } else if let endIndex = endPoints.firstIndex(of: node.position) {
+                // End points
+                color = endIndex == 0 ? .red : .purple
+            } else if !areBallsHidden {
+                // Regular ball
+                color = .blue
+            }
+
+            // Only add spheres if color is set
+            if let sphereColor = color {
+                addSphere(at: position, color: sphereColor)
             }
         }
-        
-        if let startPoint = startPoint {
-            addSphere(at: startPoint, color: .green)
-        }
-        
-        if let endPoint = endPoint {
-            addSphere(at: endPoint, color: .red)
-        }
     }
+
     
     @objc private func showShortestPath() {
         findAndHighlightShortestPath()
@@ -249,7 +282,7 @@ class CombinedARViewController: UIViewController, ARSessionDelegate {
         
         var allPoints = ballPositions
         if let start = startPoint { allPoints.append(start) }
-        if let end = endPoint { allPoints.append(end) }
+        for endPoint in endPoints { allPoints.append(endPoint) }
         
         for (index, position) in allPoints.enumerated() {
             let node = Node(id: index, position: position)
@@ -269,20 +302,52 @@ class CombinedARViewController: UIViewController, ARSessionDelegate {
     
     private func findAndHighlightShortestPath() {
         guard let startIndex = nodes.firstIndex(where: { $0.position == startPoint }),
-              let endIndex = nodes.firstIndex(where: { $0.position == endPoint }) else {
-            print("Start or end point not found in nodes")
+              endPoints.count >= 2,
+              let endPoint1Index = nodes.firstIndex(where: { $0.position == endPoints[0] }),
+              let endPoint2Index = nodes.firstIndex(where: { $0.position == endPoints[1] }) else {
+            print("Start or end points not properly set in nodes")
             return
         }
-        
-        let (path, _) = dijkstra(start: startIndex, end: endIndex)
-        
-        if path.isEmpty {
-            print("No path found between start and end nodes")
+
+        let (path1, _) = dijkstra(start: startIndex, end: endPoint1Index)
+        let (path2, _) = dijkstra(start: endPoint1Index, end: endPoint2Index)
+
+        if path1.isEmpty {
+            print("No path found between start and end point 1")
         } else {
-            pathNodes = path
-            highlightPath(path)
+            pathStartToEndPoint1 = path1
+        }
+
+        if path2.isEmpty {
+            print("No path found between end point 1 and end point 2")
+        } else {
+            pathEndPoint1ToEndPoint2 = path2
+        }
+
+        // Initially display only the first path
+        pathNodes = pathStartToEndPoint1
+        highlightPath()
+    }
+    
+    @objc private func deliveryCompleteAction() {
+        deliveryCompletePressedCount += 1
+
+        if deliveryCompletePressedCount == 1 {
+            // Remove the first path and display the second path
+            pathNodes = pathEndPoint1ToEndPoint2
+            highlightPath()
+        } else {
+            // Remove all paths
+            pathNodes.removeAll()
+            pathStartToEndPoint1.removeAll()
+            pathEndPoint1ToEndPoint2.removeAll()
+            highlightPath()
+            deliveryCompleteButton.isHidden = true
+            deliveryCompletePressedCount = 0
         }
     }
+
+
     
     private func dijkstra(start: Int, end: Int) -> ([Int], [Float]) {
         var distances = [Float](repeating: Float.infinity, count: nodes.count)
@@ -322,7 +387,7 @@ class CombinedARViewController: UIViewController, ARSessionDelegate {
         return simd_distance(node1.position, node2.position)
     }
     
-    private func highlightPath(_ path: [Int]) {
+    private func highlightPath() {
         refreshARView()
     }
     
